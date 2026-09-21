@@ -156,10 +156,10 @@ pub fn destroy_all_borders() -> color_eyre::Result<()> {
 
     let mut remaining_hwnds = vec![];
 
-    WindowsApi::enum_windows(
+    let _ = WindowsApi::enum_windows(
         Some(border_hwnds),
         &mut remaining_hwnds as *mut Vec<isize> as isize,
-    )?;
+    );
 
     if !remaining_hwnds.is_empty() {
         tracing::info!("purging unknown borders: {:?}", remaining_hwnds);

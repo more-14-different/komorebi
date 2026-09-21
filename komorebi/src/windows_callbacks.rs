@@ -29,8 +29,9 @@ pub extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let is_window = WindowsApi::is_window(hwnd.0 as isize);
     let is_minimized = WindowsApi::is_iconic(hwnd.0 as isize);
     let is_maximized = WindowsApi::is_zoomed(hwnd.0 as isize);
+    let is_hung = WindowsApi::is_window_hung(hwnd.0 as isize);
 
-    if is_visible && is_window && !is_minimized {
+    if is_visible && is_window && !is_minimized && !is_hung {
         let window = Window::from(hwnd);
 
         if let Ok(should_manage) = window.should_manage(None, &mut RuleDebug::default())
@@ -55,8 +56,9 @@ pub extern "system" fn alt_tab_windows(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let is_visible = WindowsApi::is_window_visible(hwnd.0 as isize);
     let is_window = WindowsApi::is_window(hwnd.0 as isize);
     let is_minimized = WindowsApi::is_iconic(hwnd.0 as isize);
+    let is_hung = WindowsApi::is_window_hung(hwnd.0 as isize);
 
-    if is_visible && is_window && !is_minimized {
+    if is_visible && is_window && !is_minimized && !is_hung {
         let window = Window::from(hwnd);
 
         if let Ok(should_manage) = window.should_manage(None, &mut RuleDebug::default())
@@ -91,12 +93,16 @@ pub extern "system" fn win_event_hook(
         return;
     }
 
-    let window = Window::from(hwnd);
-
     let winevent = match WinEvent::try_from(event) {
         Ok(event) => event,
         Err(_) => return,
     };
+
+    if winevent != WinEvent::ObjectDestroy && WindowsApi::is_window_hung(hwnd.0 as isize) {
+        return;
+    }
+
+    let window = Window::from(hwnd);
 
     // this forwards the message to the window's border when it moves or is destroyed
     // see border_manager/border.rs

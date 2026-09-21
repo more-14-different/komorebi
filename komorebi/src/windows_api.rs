@@ -98,11 +98,11 @@ use windows::Win32::UI::WindowsAndMessaging::GetTopWindow;
 use windows::Win32::UI::WindowsAndMessaging::GetWindow;
 use windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW;
 use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
-use windows::Win32::UI::WindowsAndMessaging::GetWindowTextW;
 use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 use windows::Win32::UI::WindowsAndMessaging::HDEVNOTIFY;
 use windows::Win32::UI::WindowsAndMessaging::HWND_BOTTOM;
 use windows::Win32::UI::WindowsAndMessaging::HWND_TOP;
+use windows::Win32::UI::WindowsAndMessaging::IsHungAppWindow;
 use windows::Win32::UI::WindowsAndMessaging::IsIconic;
 use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
@@ -116,6 +116,10 @@ use windows::Win32::UI::WindowsAndMessaging::RegisterClassW;
 use windows::Win32::UI::WindowsAndMessaging::RegisterDeviceNotificationW;
 use windows::Win32::UI::WindowsAndMessaging::SET_WINDOW_POS_FLAGS;
 use windows::Win32::UI::WindowsAndMessaging::SHOW_WINDOW_CMD;
+use windows::Win32::UI::WindowsAndMessaging::SMTO_ABORTIFHUNG;
+use windows::Win32::UI::WindowsAndMessaging::SMTO_NORMAL;
+use windows::Win32::UI::WindowsAndMessaging::SendMessageTimeoutW;
+use windows::Win32::UI::WindowsAndMessaging::WM_GETTEXT;
 use windows::Win32::UI::WindowsAndMessaging::SPI_GETACTIVEWINDOWTRACKING;
 use windows::Win32::UI::WindowsAndMessaging::SPI_GETFOREGROUNDLOCKTIMEOUT;
 use windows::Win32::UI::WindowsAndMessaging::SPI_SETACTIVEWINDOWTRACKING;
@@ -415,7 +419,14 @@ impl WindowsApi {
     }
 
     pub fn enum_windows(callback: WNDENUMPROC, callback_data_address: isize) -> eyre::Result<()> {
-        unsafe { EnumWindows(callback, LPARAM(callback_data_address)) }.process()
+        let res = unsafe { EnumWindows(callback, LPARAM(callback_data_address)) };
+        match res {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                tracing::warn!("EnumWindows finished with non-fatal warning: {e}");
+                Ok(())
+            }
+        }
     }
 
     pub fn load_workspace_information(monitors: &mut Ring<Monitor>) -> eyre::Result<()> {
@@ -977,15 +988,35 @@ impl WindowsApi {
         Self::set_window_long_ptr_w(HWND(as_ptr!(hwnd)), GWL_EXSTYLE, new_value)
     }
 
+    pub fn is_window_hung(hwnd: isize) -> bool {
+        unsafe { IsHungAppWindow(HWND(as_ptr!(hwnd))).as_bool() }
+    }
+
     pub fn window_text_w(hwnd: isize) -> eyre::Result<String> {
-        let mut text: [u16; 512] = [0; 512];
-        match WindowsResult::from(unsafe { GetWindowTextW(HWND(as_ptr!(hwnd)), &mut text) }) {
-            WindowsResult::Ok(len) => {
-                let length = usize::try_from(len)?;
-                Ok(String::from_utf16(&text[..length])?)
-            }
-            WindowsResult::Err(error) => Err(error),
+        if Self::is_window_hung(hwnd) {
+            bail!("window is hung");
         }
+
+        let mut text: [u16; 512] = [0; 512];
+        let mut result_len: usize = 0;
+        let res = unsafe {
+            SendMessageTimeoutW(
+                HWND(as_ptr!(hwnd)),
+                WM_GETTEXT,
+                WPARAM(512),
+                LPARAM(text.as_mut_ptr() as isize),
+                SMTO_ABORTIFHUNG | SMTO_NORMAL,
+                50,
+                Some(&mut result_len),
+            )
+        };
+
+        if res.0 == 0 {
+            bail!("failed to get window text (timeout or error)");
+        }
+
+        let length = usize::min(result_len, 511);
+        Ok(String::from_utf16(&text[..length])?)
     }
 
     fn open_process(

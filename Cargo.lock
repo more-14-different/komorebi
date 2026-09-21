@@ -2783,7 +2783,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -3291,7 +3291,7 @@ dependencies = [
  "serde_yaml 0.9.34+deprecated",
  "shadow-rs",
  "strum",
- "sysinfo 0.39.6",
+ "sysinfo 0.39.5",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -3340,7 +3340,7 @@ dependencies = [
  "serde",
  "serde_json_lenient",
  "starship-battery",
- "sysinfo 0.39.6",
+ "sysinfo 0.39.5",
  "systray-util",
  "tokio",
  "tracing",
@@ -3436,7 +3436,7 @@ dependencies = [
  "serde",
  "serde_json_lenient",
  "shadow-rs",
- "sysinfo 0.39.6",
+ "sysinfo 0.39.5",
  "thiserror 2.0.20",
  "which",
  "win-msgbox",
@@ -6430,9 +6430,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.39.6"
+version = "0.39.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2071df9448915b71c4fe6d25deaf1c22f12bd234f01540b77312bb8e41361e6"
+checksum = "2c8bd2130a9b60bee2581bf82cfe89ee836424d1f37dcfa4ce21509611684673"
 dependencies = [
  "libc",
  "memchr",

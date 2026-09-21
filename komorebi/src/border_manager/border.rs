@@ -207,6 +207,10 @@ pub extern "system" fn border_hwnds(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let hwnds = unsafe { &mut *(lparam.0 as *mut Vec<isize>) };
     let hwnd = hwnd.0 as isize;
 
+    if !WindowsApi::is_window(hwnd) || WindowsApi::is_window_hung(hwnd) {
+        return true.into();
+    }
+
     if let Ok(class) = WindowsApi::real_window_class_w(hwnd)
         && class.starts_with("komoborder")
     {
