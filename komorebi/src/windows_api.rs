@@ -624,6 +624,10 @@ impl WindowsApi {
 
     /// set_window_pos calls SetWindowPos without any accounting for Window decorations.
     fn set_window_pos(hwnd: HWND, layout: &Rect, position: HWND, flags: u32) -> eyre::Result<()> {
+        if unsafe { IsHungAppWindow(hwnd).as_bool() } {
+            bail!("window is hung");
+        }
+
         unsafe {
             SetWindowPos(
                 hwnd,
@@ -640,6 +644,10 @@ impl WindowsApi {
 
     /// move_windows calls MoveWindow, but cannot be called with async window pos, so it might hang
     pub fn move_window(hwnd: isize, layout: &Rect, repaint: bool) -> eyre::Result<()> {
+        if Self::is_window_hung(hwnd) {
+            bail!("window is hung");
+        }
+
         let hwnd = HWND(as_ptr!(hwnd));
 
         let shadow_rect = Self::shadow_rect(hwnd).unwrap_or_default();
@@ -653,6 +661,9 @@ impl WindowsApi {
     }
 
     pub fn show_window(hwnd: isize, command: SHOW_WINDOW_CMD) {
+        if Self::is_window_hung(hwnd) {
+            return;
+        }
         // BOOL is returned but does not signify whether or not the operation was succesful
         // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
         // TODO: error handling
@@ -888,6 +899,10 @@ impl WindowsApi {
         index: WINDOW_LONG_PTR_INDEX,
         new_value: isize,
     ) -> eyre::Result<()> {
+        if unsafe { IsHungAppWindow(hwnd).as_bool() } {
+            bail!("window is hung");
+        }
+
         Result::from(WindowsResult::from(unsafe {
             SetWindowLongPtrW(hwnd, index, new_value)
         }))
@@ -900,6 +915,10 @@ impl WindowsApi {
         index: WINDOW_LONG_PTR_INDEX,
         new_value: i32,
     ) -> eyre::Result<()> {
+        if unsafe { IsHungAppWindow(hwnd).as_bool() } {
+            bail!("window is hung");
+        }
+
         Result::from(WindowsResult::from(unsafe {
             SetWindowLongPtrW(hwnd, index, new_value)
         }))
@@ -928,6 +947,10 @@ impl WindowsApi {
 
     #[cfg(target_pointer_width = "64")]
     fn window_long_ptr_w(hwnd: HWND, index: WINDOW_LONG_PTR_INDEX) -> eyre::Result<isize> {
+        if unsafe { IsHungAppWindow(hwnd).as_bool() } {
+            bail!("window is hung");
+        }
+
         // Can return 0, which does not always mean that an error has occurred
         // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowlongptrw
         unsafe {
@@ -949,6 +972,10 @@ impl WindowsApi {
 
     #[cfg(target_pointer_width = "32")]
     fn window_long_ptr_w(hwnd: HWND, index: WINDOW_LONG_PTR_INDEX) -> eyre::Result<i32> {
+        if unsafe { IsHungAppWindow(hwnd).as_bool() } {
+            bail!("window is hung");
+        }
+
         // Can return 0, which does not always mean that an error has occurred
         // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowlongptrw
         unsafe {
@@ -1351,6 +1378,10 @@ impl WindowsApi {
     }
 
     pub fn set_transparent(hwnd: isize, alpha: u8) -> eyre::Result<()> {
+        if Self::is_window_hung(hwnd) {
+            bail!("window is hung");
+        }
+
         unsafe {
             #[allow(clippy::cast_sign_loss)]
             SetLayeredWindowAttributes(
@@ -1365,6 +1396,9 @@ impl WindowsApi {
     }
 
     pub fn get_transparent(hwnd: isize) -> eyre::Result<u8> {
+        if Self::is_window_hung(hwnd) {
+            bail!("window is hung");
+        }
         unsafe {
             let mut alpha: u8 = u8::default();
             let mut color_ref = COLORREF(-1i32 as u32);

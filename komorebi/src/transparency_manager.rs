@@ -73,6 +73,9 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
         let known_hwnds = KNOWN_HWNDS.get_or_init(|| Mutex::new(Vec::new()));
         if !TRANSPARENCY_ENABLED.load_consume() {
             for hwnd in known_hwnds.lock().iter() {
+                if WindowsApi::is_window_hung(*hwnd) {
+                    continue;
+                }
                 if let Err(error) = Window::from(*hwnd).opaque() {
                     tracing::error!("failed to make window {hwnd} opaque: {error}")
                 }
@@ -83,12 +86,13 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
 
         known_hwnds.lock().clear();
 
-        // Check the wm state every time we receive a notification
+        // Check the wm state every time we receive a notification, clone monitors and release lock immediately
         let state = wm.lock();
-
         let focused_monitor_idx = state.focused_monitor_idx();
+        let monitors = state.monitors.clone();
+        drop(state);
 
-        'monitors: for (monitor_idx, m) in state.monitors.elements().iter().enumerate() {
+        'monitors: for (monitor_idx, m) in monitors.elements().iter().enumerate() {
             let focused_workspace_idx = m.focused_workspace_idx();
 
             'workspaces: for (workspace_idx, ws) in m.workspaces().iter().enumerate() {
@@ -96,6 +100,9 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
                 // Workspaces with tiling disabled don't have transparent windows
                 if !ws.tile || workspace_idx != focused_workspace_idx {
                     for window in ws.visible_windows().iter().flatten() {
+                        if WindowsApi::is_window_hung(window.hwnd) {
+                            continue;
+                        }
                         if let Err(error) = window.opaque() {
                             let hwnd = window.hwnd;
                             tracing::error!("failed to make window {hwnd} opaque: {error}")
@@ -108,6 +115,9 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
                 // Monocle container is never transparent
                 if let Some(monocle) = &ws.monocle_container {
                     if let Some(window) = monocle.focused_window() {
+                        if WindowsApi::is_window_hung(window.hwnd) {
+                            continue 'monitors;
+                        }
                         if monitor_idx == focused_monitor_idx {
                             if let Err(error) = window.opaque() {
                                 let hwnd = window.hwnd;
@@ -130,9 +140,11 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
                 let is_maximized = WindowsApi::is_zoomed(foreground_hwnd);
 
                 if is_maximized {
-                    if let Err(error) = Window::from(foreground_hwnd).opaque() {
-                        let hwnd = foreground_hwnd;
-                        tracing::error!("failed to make maximized window {hwnd} opaque: {error}")
+                    if !WindowsApi::is_window_hung(foreground_hwnd) {
+                        if let Err(error) = Window::from(foreground_hwnd).opaque() {
+                            let hwnd = foreground_hwnd;
+                            tracing::error!("failed to make maximized window {hwnd} opaque: {error}")
+                        }
                     }
 
                     continue 'monitors;
@@ -150,6 +162,9 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
                     if idx != ws.focused_container_idx() || monitor_idx != focused_monitor_idx {
                         let focused_window_idx = c.focused_window_idx();
                         for (window_idx, window) in c.windows().iter().enumerate() {
+                            if WindowsApi::is_window_hung(window.hwnd) {
+                                continue;
+                            }
                             if window_idx == focused_window_idx {
                                 let mut should_make_transparent = true;
                                 if !transparency_blacklist.is_empty()
@@ -196,6 +211,9 @@ pub fn handle_notifications(wm: Arc<Mutex<WindowManager>>) -> color_eyre::Result
                     } else {
                         let focused_window_idx = c.focused_window_idx();
                         for (window_idx, window) in c.windows().iter().enumerate() {
+                            if WindowsApi::is_window_hung(window.hwnd) {
+                                continue;
+                            }
                             if window_idx != focused_window_idx {
                                 known_hwnds.lock().push(window.hwnd);
                             } else {

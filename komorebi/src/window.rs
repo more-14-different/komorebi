@@ -806,6 +806,10 @@ impl Window {
     }
 
     pub fn transparent(self) -> eyre::Result<()> {
+        if WindowsApi::is_window_hung(self.hwnd) {
+            return Ok(());
+        }
+
         let animation_enabled = ANIMATION_ENABLED_PER_ANIMATION.lock();
         let transparent_enabled = animation_enabled.get(&TransparencyRenderDispatcher::PREFIX);
 
@@ -844,6 +848,10 @@ impl Window {
     }
 
     pub fn opaque(self) -> eyre::Result<()> {
+        if WindowsApi::is_window_hung(self.hwnd) {
+            return Ok(());
+        }
+
         let animation_enabled = ANIMATION_ENABLED_PER_ANIMATION.lock();
         let transparent_enabled = animation_enabled.get(&TransparencyRenderDispatcher::PREFIX);
 
@@ -879,30 +887,48 @@ impl Window {
     }
 
     pub fn set_accent(self, colour: u32) -> eyre::Result<()> {
+        if WindowsApi::is_window_hung(self.hwnd) {
+            return Ok(());
+        }
         WindowsApi::set_window_accent(self.hwnd, Some(colour))
     }
 
     pub fn remove_accent(self) -> eyre::Result<()> {
+        if WindowsApi::is_window_hung(self.hwnd) {
+            return Ok(());
+        }
         WindowsApi::set_window_accent(self.hwnd, None)
     }
 
     #[cfg(target_pointer_width = "64")]
     pub fn update_style(self, style: &WindowStyle) -> eyre::Result<()> {
+        if WindowsApi::is_window_hung(self.hwnd) {
+            return Ok(());
+        }
         WindowsApi::update_style(self.hwnd, isize::try_from(style.bits())?)
     }
 
     #[cfg(target_pointer_width = "32")]
     pub fn update_style(self, style: &WindowStyle) -> eyre::Result<()> {
+        if WindowsApi::is_window_hung(self.hwnd) {
+            return Ok(());
+        }
         WindowsApi::update_style(self.hwnd, i32::try_from(style.bits())?)
     }
 
     #[cfg(target_pointer_width = "64")]
     pub fn update_ex_style(self, style: &ExtendedWindowStyle) -> eyre::Result<()> {
+        if WindowsApi::is_window_hung(self.hwnd) {
+            return Ok(());
+        }
         WindowsApi::update_ex_style(self.hwnd, isize::try_from(style.bits())?)
     }
 
     #[cfg(target_pointer_width = "32")]
     pub fn update_ex_style(self, style: &ExtendedWindowStyle) -> eyre::Result<()> {
+        if WindowsApi::is_window_hung(self.hwnd) {
+            return Ok(());
+        }
         WindowsApi::update_ex_style(self.hwnd, i32::try_from(style.bits())?)
     }
 
