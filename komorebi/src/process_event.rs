@@ -401,6 +401,11 @@ impl WindowManager {
                 already_moved_window_handles.remove(&window.hwnd);
             }
             WindowManagerEvent::FocusChange(_, window) => {
+                if WindowsApi::is_window_hung(window.hwnd) {
+                    tracing::debug!("ignoring focus change for hung window {}", window.hwnd);
+                    return Ok(());
+                }
+
                 if should_skip_focus_change(WindowsApi::foreground_window().ok(), window.hwnd) {
                     tracing::debug!(
                         "ignoring stale focus change for hwnd {} as it is not the foreground window",

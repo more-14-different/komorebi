@@ -779,6 +779,10 @@ impl Window {
     }
 
     pub fn focus(self, mouse_follows_focus: bool) -> eyre::Result<()> {
+        if WindowsApi::is_window_hung(self.hwnd) {
+            return Ok(());
+        }
+
         // If the target window is already focused, do nothing.
         if let Ok(ihwnd) = WindowsApi::foreground_window()
             && ihwnd == self.hwnd

@@ -718,6 +718,10 @@ impl WindowsApi {
     }
 
     pub fn raise_and_focus_window(hwnd: isize) -> eyre::Result<()> {
+        if Self::is_window_hung(hwnd) {
+            bail!("window is hung");
+        }
+
         let event = [INPUT {
             r#type: INPUT_MOUSE,
             ..Default::default()
