@@ -7,6 +7,7 @@ use color_eyre::eyre::OptionExt;
 use crossbeam_utils::atomic::AtomicConsume;
 use parking_lot::Mutex;
 
+use crate::core::HidingBehaviour;
 use crate::core::OperationDirection;
 use crate::core::Rect;
 use crate::core::Sizing;
@@ -16,6 +17,7 @@ use crate::CURRENT_VIRTUAL_DESKTOP;
 use crate::DefaultLayout;
 use crate::FLOATING_APPLICATIONS;
 use crate::HIDDEN_HWNDS;
+use crate::HIDING_BEHAVIOUR;
 use crate::Layout;
 use crate::Notification;
 use crate::NotificationEvent;
@@ -55,6 +57,20 @@ fn should_refocus_after_destroy(foreground_hwnd: Option<isize>) -> bool {
     matches!(foreground_hwnd, None | Some(0))
 }
 
+fn should_remove_minimized_window(
+    hiding_behaviour: HidingBehaviour,
+    is_programmatically_hidden: bool,
+) -> bool {
+    !matches!(hiding_behaviour, HidingBehaviour::Minimize) || !is_programmatically_hidden
+}
+
+fn should_process_unmanageable_event(
+    is_managed_minimize: bool,
+    transparency_override: bool,
+) -> bool {
+    is_managed_minimize || transparency_override
+}
+
 #[cfg(test)]
 mod focus_change_tests {
     use super::should_skip_focus_change;
@@ -92,6 +108,84 @@ mod destroy_focus_tests {
     #[test]
     fn defers_when_a_successor_took_the_foreground() {
         assert!(!should_refocus_after_destroy(Some(12345)));
+    }
+}
+
+#[cfg(test)]
+mod minimize_tests {
+    use std::path::PathBuf;
+
+    use crossbeam_channel::bounded;
+    use uuid::Uuid;
+
+    use super::should_process_unmanageable_event;
+    use super::should_remove_minimized_window;
+    use crate::HidingBehaviour;
+    use crate::Window;
+    use crate::core::Rect;
+    use crate::monitor;
+    use crate::window_manager::WindowManager;
+    use crate::window_manager_event::WindowManagerEvent;
+
+    #[test]
+    #[allow(deprecated)]
+    fn only_programmatic_minimize_hiding_suppresses_a_minimize_event() {
+        assert!(!should_remove_minimized_window(
+            HidingBehaviour::Minimize,
+            true
+        ));
+        assert!(should_remove_minimized_window(
+            HidingBehaviour::Minimize,
+            false
+        ));
+        assert!(should_remove_minimized_window(HidingBehaviour::Cloak, true));
+        assert!(should_remove_minimized_window(HidingBehaviour::Hide, true));
+    }
+
+    #[test]
+    fn managed_minimize_bypasses_current_window_eligibility() {
+        assert!(should_process_unmanageable_event(true, false));
+        assert!(should_process_unmanageable_event(false, true));
+        assert!(!should_process_unmanageable_event(false, false));
+    }
+
+    #[test]
+    fn locates_minimized_window_on_non_focused_monitor() -> color_eyre::Result<()> {
+        let (_sender, receiver) = bounded::<WindowManagerEvent>(1);
+        let socket_path = PathBuf::from(format!("komorebi-minimize-test-{}.sock", Uuid::new_v4()));
+        let mut wm = WindowManager::new(receiver, Some(socket_path.clone()))?;
+
+        let first = monitor::new(
+            1,
+            Rect::default(),
+            Rect::default(),
+            "first".to_string(),
+            "first".to_string(),
+            "first".to_string(),
+            None,
+        );
+        let mut second = monitor::new(
+            2,
+            Rect::default(),
+            Rect::default(),
+            "second".to_string(),
+            "second".to_string(),
+            "second".to_string(),
+            None,
+        );
+        second
+            .focused_workspace_mut()
+            .expect("test monitor should have a workspace")
+            .new_container_for_window(Window::from(42));
+
+        wm.monitors_mut().push_back(first);
+        wm.monitors_mut().push_back(second);
+
+        assert_eq!(wm.workspace_indices_for_window(42), Some((1, 0)));
+
+        drop(wm);
+        std::fs::remove_file(socket_path)?;
+        Ok(())
     }
 }
 
@@ -140,6 +234,45 @@ pub fn listen_for_events(wm: Arc<Mutex<WindowManager>>) {
 }
 
 impl WindowManager {
+    fn workspace_indices_for_window(&self, hwnd: isize) -> Option<(usize, usize)> {
+        self.monitors()
+            .iter()
+            .enumerate()
+            .find_map(|(monitor_idx, monitor)| {
+                monitor
+                    .workspaces()
+                    .iter()
+                    .position(|workspace| workspace.contains_window(hwnd))
+                    .map(|workspace_idx| (monitor_idx, workspace_idx))
+            })
+    }
+
+    fn remove_minimized_window(&mut self, hwnd: isize) -> eyre::Result<()> {
+        let Some((monitor_idx, workspace_idx)) = self.workspace_indices_for_window(hwnd) else {
+            tracing::debug!("ignoring minimize for unmanaged hwnd: {hwnd}");
+            return Ok(());
+        };
+
+        let workspace_is_visible = self
+            .monitors()
+            .get(monitor_idx)
+            .is_some_and(|monitor| monitor.focused_workspace_idx() == workspace_idx);
+
+        self.monitors_mut()
+            .get_mut(monitor_idx)
+            .ok_or_eyre("there is no monitor at this index")?
+            .workspaces_mut()
+            .get_mut(workspace_idx)
+            .ok_or_eyre("there is no workspace at this index")?
+            .remove_window(hwnd)?;
+
+        if workspace_is_visible {
+            self.update_focused_workspace_by_monitor_idx(monitor_idx)?;
+        }
+
+        Ok(())
+    }
+
     #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     #[tracing::instrument(skip(self, event), fields(event = event.title(), winevent = event.winevent(), hwnd = event.hwnd()))]
     pub fn process_event(&mut self, event: WindowManagerEvent) -> eyre::Result<()> {
@@ -155,13 +288,21 @@ impl WindowManager {
         // All event handlers below this point should only be processed if the event is
         // related to a window that should be managed by the WindowManager.
         if !should_manage {
+            let event_hwnd = event.window().hwnd;
+            // A minimized window can fail the normal eligibility checks because Windows moves its
+            // rectangle off-screen before dispatching SystemMinimizeStart. Existing managed
+            // windows must still reach the minimize handler even when transparency is disabled.
+            let is_managed_minimize = matches!(event, WindowManagerEvent::Minimize(_, _))
+                && self
+                    .monitors()
+                    .iter()
+                    .flat_map(|monitor| monitor.workspaces())
+                    .any(|workspace| workspace.contains_window(event_hwnd));
             let mut transparency_override = false;
 
             if transparency_manager::TRANSPARENCY_ENABLED.load_consume() {
                 for m in self.monitors() {
                     for w in m.workspaces() {
-                        let event_hwnd = event.window().hwnd;
-
                         let visible_hwnds = w
                             .visible_windows()
                             .iter()
@@ -175,20 +316,11 @@ impl WindowManager {
                         if contains_managed_window && !visible_hwnds.contains(&event_hwnd) {
                             transparency_override = true;
                         }
-
-                        // but we always want to handle a minimize event when transparency overrides
-                        // are applied
-                        if !transparency_override
-                            && contains_managed_window
-                            && matches!(event, WindowManagerEvent::Minimize(_, _))
-                        {
-                            transparency_override = true;
-                        }
                     }
                 }
             }
 
-            if !transparency_override {
+            if !should_process_unmanageable_event(is_managed_minimize, transparency_override) {
                 if rule_debug.matches_ignore_identifier.is_some() {
                     border_manager::send_notification(Option::from(event.hwnd()));
                 }
@@ -340,18 +472,12 @@ impl WindowManager {
                         window.hwnd
                     );
                 } else {
-                    let mut hide = false;
+                    let hiding_behaviour = *HIDING_BEHAVIOUR.lock();
+                    let is_programmatically_hidden = HIDDEN_HWNDS.lock().contains(&window.hwnd);
 
+                    if should_remove_minimized_window(hiding_behaviour, is_programmatically_hidden)
                     {
-                        let programmatically_hidden_hwnds = HIDDEN_HWNDS.lock();
-                        if !programmatically_hidden_hwnds.contains(&window.hwnd) {
-                            hide = true;
-                        }
-                    }
-
-                    if hide {
-                        self.focused_workspace_mut()?.remove_window(window.hwnd)?;
-                        self.update_focused_workspace(false, false)?;
+                        self.remove_minimized_window(window.hwnd)?;
                     }
                 }
             }
