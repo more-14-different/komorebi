@@ -35,6 +35,7 @@ if ($needBuild) {
     & $buildScript -DebugBuild:$DebugBuild
 }
 
+$env:KOMOREBI_DEV_BUILD = $buildProfile
 $env:KOMOREBI_DEV_BIN_DIR = $binDir
 $env:KOMOREBI_CONFIG_HOME = $configHome
 
@@ -44,5 +45,13 @@ $restartScript = if ($CleanState) {
     Join-Path $configHome "run-komorebi-dumped-session.ps1"
 }
 
+$restartArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $restartScript)
+if ($DebugBuild) {
+    $restartArgs += "-DebugBuild"
+}
+if ($NoBar) {
+    $restartArgs += "-NoBar"
+}
+
 Write-Host "Restarting Komorebi Dev ($buildProfile) via $restartScript..."
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $restartScript $(if ($NoBar) { "-NoBar" })
+& powershell.exe @restartArgs
