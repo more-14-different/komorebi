@@ -1,9 +1,10 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$NoBuild,
     [switch]$DebugBuild,
     [switch]$CleanState,
-    [switch]$NoBar
+    [switch]$NoBar,
+    [switch]$Rebuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,13 +13,29 @@ $repoRoot = $PSScriptRoot
 $configGuard = Join-Path $repoRoot "assert-dev-config.ps1"
 $configHome = & $configGuard
 
-if (-not $NoBuild) {
+$buildProfile = if ($DebugBuild) { "debug" } else { "release" }
+$binDir = Join-Path $repoRoot "target\$buildProfile"
+$komorebiExe = Join-Path $binDir "komorebi.exe"
+$komorebicExe = Join-Path $binDir "komorebic.exe"
+
+$needBuild = $false
+if ($DebugBuild -or $Rebuild) {
+    # Debug: 无条件强制重新编译 (除非显式 -NoBuild)
+    $needBuild = -not $NoBuild
+} else {
+    # Release: 仅在缺失时自动 build，不缺失时纯启动/纯重启
+    $binariesExist = (Test-Path -LiteralPath $komorebiExe) -and (Test-Path -LiteralPath $komorebicExe)
+    if (-not $binariesExist) {
+        $needBuild = -not $NoBuild
+    }
+}
+
+if ($needBuild) {
     $buildScript = Join-Path $repoRoot "build-dev.ps1"
     & $buildScript -DebugBuild:$DebugBuild
 }
 
-$buildProfile = if ($DebugBuild) { "debug" } else { "release" }
-$env:KOMOREBI_DEV_BIN_DIR = Join-Path $repoRoot "target\$buildProfile"
+$env:KOMOREBI_DEV_BIN_DIR = $binDir
 $env:KOMOREBI_CONFIG_HOME = $configHome
 
 $restartScript = if ($CleanState) {
