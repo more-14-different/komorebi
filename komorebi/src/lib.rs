@@ -126,6 +126,13 @@ lazy_static! {
             id: String::from("firefox.exe"),
             matching_strategy: Option::from(MatchingStrategy::Equals),
         }),
+        // Ghostty for Windows can launch without emitting ObjectShow, but does emit
+        // ObjectNameChange once its terminal title is initialized.
+        MatchingRule::Simple(IdWithIdentifier {
+            kind: ApplicationIdentifier::Exe,
+            id: String::from("ghostty.exe"),
+            matching_strategy: Option::from(MatchingStrategy::Equals),
+        }),
         MatchingRule::Simple(IdWithIdentifier {
             kind: ApplicationIdentifier::Exe,
             id: String::from("idea64.exe"),
